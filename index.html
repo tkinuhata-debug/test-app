@@ -1,0 +1,252 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>青空文庫テキストクリーナー (ドロップ修正版)</title>
+    <style>
+        /* 画面全体でドロップを受け付けるための設定 */
+        html, body {
+            height: 100%;
+            margin: 0;
+            padding: 0;
+        }
+        body {
+            font-family: 'Helvetica Neue', Arial, sans-serif;
+            background-color: #f5f7fa;
+            color: #333;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+        .container {
+            background: #ffffff;
+            padding: 30px;
+            border-radius: 8px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.05);
+            width: 100%;
+            max-width: 500px;
+            box-sizing: border-box;
+        }
+        h1 {
+            font-size: 20px;
+            margin-top: 0;
+            margin-bottom: 20px;
+            color: #2c3e50;
+            text-align: center;
+        }
+        .file-drop-area {
+            border: 2px dashed #cbd5e1;
+            border-radius: 6px;
+            padding: 40px 20px;
+            text-align: center;
+            background-color: #f8fafc;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        .file-drop-area.dragover {
+            border-color: #3b82f6;
+            background-color: #eff6ff;
+        }
+        input[type="file"] {
+            display: none;
+        }
+        .encoding-selector {
+            margin-top: 20px;
+            text-align: center;
+            font-size: 14px;
+        }
+        .encoding-selector label {
+            margin: 0 10px;
+            cursor: pointer;
+        }
+        .btn {
+            display: block;
+            width: 100%;
+            padding: 12px;
+            background-color: #3b82f6;
+            color: white;
+            border: none;
+            border-radius: 6px;
+            font-size: 16px;
+            font-weight: bold;
+            cursor: pointer;
+            margin-top: 20px;
+            transition: background-color 0.2s;
+        }
+        .btn:hover {
+            background-color: #2563eb;
+        }
+        .btn:disabled {
+            background-color: #94a3b8;
+            cursor: not-allowed;
+        }
+        #status {
+            margin-top: 15px;
+            font-size: 14px;
+            text-align: center;
+            color: #64748b;
+            line-height: 1.4;
+        }
+        .preview-box {
+            margin-top: 20px;
+            padding: 12px;
+            background: #f1f5f9;
+            border-radius: 4px;
+            font-size: 12px;
+            max-height: 120px;
+            overflow-y: auto;
+            white-space: pre-wrap;
+            border: 1px solid #e2e8f0;
+            display: none;
+        }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h1>青空文庫テキストクリーナー</h1>
+    
+    <div class="file-drop-area" id="dropZone">
+        <span id="fileLabel">ここにテキストファイルをドラッグ＆ドロップ<br>またはクリックして選択</span>
+        <input type="file" id="fileInput" accept=".txt">
+    </div>
+
+    <!-- 文字コード手動選択スイッチ -->
+    <div class="encoding-selector">
+        文字コード設定: 
+        <label><input type="radio" name="encoding" value="Shift_JIS" checked> Shift_JIS (標準)</label>
+        <label><input type="radio" name="encoding" value="UTF-8"> UTF-8</label>
+    </div>
+
+    <div id="preview" class="preview-box"></div>
+
+    <button class="btn" id="processBtn" disabled>テキストを変換してダウンロード</button>
+    <div id="status"></div>
+</div>
+
+<script>
+    const fileInput = document.getElementById('fileInput');
+    const dropZone = document.getElementById('dropZone');
+    const processBtn = document.getElementById('processBtn');
+    const status = document.getElementById('status');
+    const fileLabel = document.getElementById('fileLabel');
+    const preview = document.getElementById('preview');
+    
+    let currentFile = null;
+    let loadedText = '';
+
+    // 🛑 画面全体のデフォルトのドロップ挙動（ファイルを開く）を完全に禁止する
+    window.addEventListener('dragover', (e) => e.preventDefault());
+    window.addEventListener('drop', (e) => e.preventDefault());
+
+    // クリックでファイル選択を開く
+    dropZone.addEventListener('click', () => fileInput.click());
+
+    // ドロップエリアの視覚効果と処理
+    dropZone.addEventListener('dragover', (e) => {
+        e.preventDefault();
+        dropZone.classList.add('dragover');
+    });
+
+    dropZone.addEventListener('dragleave', () => {
+        dropZone.classList.remove('dragover');
+    });
+
+    dropZone.addEventListener('drop', (e) => {
+        e.preventDefault();
+        dropZone.classList.remove('dragover');
+        
+        if (e.dataTransfer.files.length > 0) {
+            // テキストファイルのみ受け付ける
+            const file = e.dataTransfer.files[0];
+            if (file.type === "text/plain" || file.name.endsWith('.txt')) {
+                currentFile = file;
+                handleFileSelect();
+            } else {
+                status.textContent = 'エラー: .txt ファイルのみ対応しています。';
+            }
+        }
+    });
+
+    fileInput.addEventListener('change', () => {
+        if (fileInput.files.length > 0) {
+            currentFile = fileInput.files[0];
+            handleFileSelect();
+        }
+    });
+
+    // 文字コードのラジオボタンが切り替わったら再読み込み
+    document.getElementsByName('encoding').forEach(radio => {
+        radio.addEventListener('change', () => {
+            if (currentFile) readFile(currentFile);
+        });
+    });
+
+    function handleFileSelect() {
+        if (!currentFile) return;
+        fileLabel.innerHTML = `<strong>選択中:</strong> ${currentFile.name}`;
+        readFile(currentFile);
+    }
+
+    // ファイル読み込みコア処理
+    function readFile(file) {
+        status.textContent = 'ファイルを読み込み中...';
+        const selectedEncoding = document.querySelector('input[name="encoding"]:checked').value;
+        const reader = new FileReader();
+        
+        reader.readAsText(file, selectedEncoding);
+        
+        reader.onload = function(e) {
+            loadedText = e.target.result;
+            
+            // プレビュー表示
+            preview.style.display = 'block';
+            preview.textContent = "【ファイル冒頭のプレビュー】\n" + loadedText.substring(0, 150) + "...";
+            
+            status.textContent = `文字コード「${selectedEncoding}」で読み込みました。文字化けしている場合は上のスイッチを切り替えてください。`;
+            processBtn.disabled = false;
+        };
+    }
+
+    // 変換およびダウンロード処理
+    processBtn.addEventListener('click', () => {
+        if (!loadedText) return;
+
+        status.textContent = '変換処理中...';
+        let result = loadedText;
+
+        // 1. 最初から記号の説明までを削除
+        result = result.replace(/^[\s\S]*?-{5,}[\s\S]*?-{5,}\r?\n/, '');
+
+        // 2. ルビ 《.*?》 を削除
+        result = result.replace(/《.*?》/g, '');
+
+        // 3. 注記 ［＃.*?］ を削除
+        result = result.replace(/［＃.*?］/g, '');
+
+        // 4. 底本：から最後までを削除
+        result = result.replace(/底本：[\d\D]*$/, '');
+
+        status.textContent = '変換完了！ダウンロードを開始します。';
+
+        // 出力ファイルは安全なUTF-8で保存
+        const blob = new Blob([result], { type: 'text/plain;charset=utf-8;' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        
+        const nameParts = currentFile.name.split('.');
+        const ext = nameParts.pop();
+        const baseName = nameParts.join('.');
+        a.href = url;
+        a.download = `${baseName}_cleaned.${ext}`;
+        
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+    });
+</script>
+
+</body>
+</html>
